@@ -12,7 +12,7 @@ This is the closest it can get.
 Lossless restoration of:
 
 	- All colliders (sphere, capsule and plane)
-	- Elasticity , Elasticity Distribution
+	- Elasticity, Elasticity Distribution
 	- Inert, Inert Distribution
 	- Radius, Radius Distribution
 
@@ -30,3 +30,7 @@ Extras:
 	- For Physbone colliders with custom rotations, an extra GameObject is added to be able to properly rotate the DynamicBone collider
 	- For Physbones with custom Gravity Falloff: (new Gravity)^2 + (new Force)^2 = (old Gravity)^2
 
+
+Video:
+
+[![IMAGE ALT TEXT](http://img.youtube.com/vi/ZEjvQAA6ATc/0.jpg)](http://www.youtube.com/watch?v=ZEjvQAA6ATc "VRC PhysBone to Dynamic Bone Conversion Tool")
