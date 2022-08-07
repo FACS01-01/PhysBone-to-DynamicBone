@@ -136,9 +136,10 @@ namespace FACS01.Utilities
             }
             else
             {
-                float f3 = Mathf.Sin(2f * Mathf.PI * physbone.gravityFalloff);
+                float f3 = Mathf.Round(100000000f * Mathf.Sin(2f * Mathf.PI * physbone.gravityFalloff)) / 100000000f;
+                float f4 = Mathf.Round(100000000f * Mathf.Cos(2f * Mathf.PI * physbone.gravityFalloff)) / 100000000f;
                 DynBoneT.GetField("m_Gravity").SetValue(newBone, new Vector3(0f, f*f3, 0f));
-                DynBoneT.GetField("m_Force").SetValue(newBone, new Vector3(0f, f*(1-f3), 0f));
+                DynBoneT.GetField("m_Force").SetValue(newBone, new Vector3(0f, f*f4, 0f));
             }
 
             float damping; AnimationCurve dampingDistrib;
