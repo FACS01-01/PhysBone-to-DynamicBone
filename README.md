@@ -34,3 +34,6 @@ Extras:
 Video:
 
 [![IMAGE ALT TEXT](http://img.youtube.com/vi/ZEjvQAA6ATc/0.jpg)](http://www.youtube.com/watch?v=ZEjvQAA6ATc "VRC PhysBone to Dynamic Bone Conversion Tool")
+
+Note:
+ You need to install VRC PhysBone and DynamicBone (v1.2.2 or greater) beforehand to avoid Unity compilation errors.
