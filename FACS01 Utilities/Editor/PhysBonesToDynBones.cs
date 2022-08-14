@@ -1,6 +1,7 @@
-﻿#if UNITY_EDITOR && (VRC_SDK_VRCSDK2 || VRC_SDK_VRCSDK3)
+﻿#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using VRC.Dynamics;
@@ -16,18 +17,10 @@ namespace FACS01.Utilities
         private static GameObject ToConvert;
         private static bool makeDuplicate;
         private static string output_print;
-        
-        private const string DynBoneQN = "DynamicBone, Assembly-CSharp, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null";
-        private const string DynBoneColliderQN = "DynamicBoneCollider, Assembly-CSharp, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null";
-        private const string DynBonePlaneColliderQN = "DynamicBonePlaneCollider, Assembly-CSharp, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null";
-        private static readonly Type DynBoneT = Type.GetType(DynBoneQN);
-        private static readonly Type DynBoneColliderT = Type.GetType(DynBoneColliderQN);
-        private static readonly Type DynBonePlaneColliderT = Type.GetType(DynBonePlaneColliderQN);
-        private static readonly bool hasDynBones = DynBoneT != null && DynBoneColliderT != null && DynBonePlaneColliderT != null;
 
         private static AnimationCurve MaxAngleToStiff;
         private static VRCPhysBoneCollider[] pbcList;
-        private static List<MonoBehaviour> dbcList;
+        private static List<DynamicBoneColliderBase> dbcList;
 
         [MenuItem("FACS Utils/Misc/PhysBones to Dynamic Bones", false, 1000)]
         public static void ShowWindow()
@@ -39,8 +32,7 @@ namespace FACS01.Utilities
 
         private static void SelectionChange()
         {
-            makeDuplicate = true;
-            output_print = "";
+            makeDuplicate = true; output_print = "";
         }
 
         public void OnGUI()
@@ -49,21 +41,17 @@ namespace FACS01.Utilities
 
             EditorGUILayout.LabelField($"<color=cyan><b>PhysBones to Dynamic Bones</b></color>\nScans the selected GameObject and converts all VRCPhysbone bones and colliders (sphere, capsule and plane) to Dynamic Bones.", FacsGUIStyles.helpbox);
 
-            if (hasDynBones)
+            EditorGUI.BeginChangeCheck();
+            ToConvert = (GameObject)EditorGUILayout.ObjectField(ToConvert, typeof(GameObject), true, GUILayout.Height(40));
+            if (EditorGUI.EndChangeCheck()) SelectionChange();
+
+            if (ToConvert)
             {
-                EditorGUI.BeginChangeCheck();
-                ToConvert = (GameObject)EditorGUILayout.ObjectField(ToConvert, typeof(GameObject), true, GUILayout.Height(40));
-                if (EditorGUI.EndChangeCheck()) SelectionChange();
-
-                if (ToConvert)
-                {
-                    makeDuplicate = GUILayout.Toggle(makeDuplicate, "Make Duplicate? (don't edit original)", GUILayout.Height(30));
-                    if (GUILayout.Button("Convert!", FacsGUIStyles.button, GUILayout.Height(40))) Conversion();
-                }
-
-                if (!String.IsNullOrEmpty(output_print)) EditorGUILayout.LabelField(output_print, FacsGUIStyles.helpbox);
+                makeDuplicate = GUILayout.Toggle(makeDuplicate, "Make Duplicate? (don't edit original)", GUILayout.Height(30));
+                if (GUILayout.Button("Convert!", FacsGUIStyles.button, GUILayout.Height(40))) Conversion();
             }
-            else EditorGUILayout.LabelField("You don't have Dynamic Bone installed in this project!", FacsGUIStyles.helpbox);
+
+            if (!String.IsNullOrEmpty(output_print)) EditorGUILayout.LabelField(output_print, FacsGUIStyles.helpbox);
         }
 
         private void Conversion()
@@ -83,7 +71,7 @@ namespace FACS01.Utilities
                 pbcList = ToConvert.GetComponentsInChildren<VRCPhysBoneCollider>(true);
                 pbList = ToConvert.GetComponentsInChildren<VRCPhysBone>(true);
             }
-            dbcList = new List<MonoBehaviour>();
+            dbcList = new List<DynamicBoneColliderBase>();
             foreach (var col in pbcList)
             {
                 if (col.shapeType == VRCPhysBoneColliderBase.ShapeType.Plane) AddDBPlaneCol(dbcList, col);
@@ -101,45 +89,58 @@ namespace FACS01.Utilities
         private void AddDB(VRCPhysBone physbone)
         {
             physbone.InitTransforms(false);
-            var newBone = (MonoBehaviour)physbone.gameObject.AddComponent(DynBoneT);
+
+            //fixing
+            if (physbone.rootTransform == null) physbone.rootTransform = physbone.transform;
+            if (physbone.ignoreTransforms != null)
+            {
+                physbone.ignoreTransforms = physbone.ignoreTransforms.Where(t => t != null).ToList();
+                if (physbone.ignoreTransforms.Count == 0) physbone.ignoreTransforms = null;
+            }
+            if (physbone.colliders != null)
+            {
+                physbone.colliders = physbone.colliders.Where(c => c != null).ToList();
+                if (physbone.colliders.Count == 0) physbone.colliders = null;
+            }
+
+            var newBone = physbone.gameObject.AddComponent<DynamicBone>();
+
             //lossless
             newBone.enabled = physbone.enabled;
-            DynBoneT.GetField("m_Root").SetValue(newBone, physbone.rootTransform);
-            DynBoneT.GetField("m_Exclusions").SetValue(newBone, physbone.ignoreTransforms);
-            DynBoneT.GetField("m_Elasticity").SetValue(newBone, physbone.pull);
-            DynBoneT.GetField("m_ElasticityDistrib").SetValue(newBone, physbone.pullCurve);
-            DynBoneT.GetField("m_Inert").SetValue(newBone, physbone.immobile);
-            DynBoneT.GetField("m_InertDistrib").SetValue(newBone, physbone.immobileCurve);
-
-            DynBoneT.GetField("m_Radius").SetValue(newBone, physbone.radius*Mathf.Abs(physbone.rootTransform.lossyScale.x)/Mathf.Abs(physbone.gameObject.transform.lossyScale.x));
-            DynBoneT.GetField("m_RadiusDistrib").SetValue(newBone, physbone.radiusCurve);
+            newBone.m_Root = physbone.rootTransform;
+            newBone.m_Exclusions = physbone.ignoreTransforms;
+            newBone.m_Elasticity = physbone.pull;
+            newBone.m_ElasticityDistrib = physbone.pullCurve;
+            newBone.m_Inert = physbone.immobile;
+            newBone.m_InertDistrib = physbone.immobileCurve;
+            newBone.m_Radius = physbone.radius * Mathf.Abs(physbone.rootTransform.lossyScale.x) / Mathf.Abs(physbone.transform.lossyScale.x);
+            newBone.m_RadiusDistrib = physbone.radiusCurve;
 
             //lossy
-            int fa = 0;
+            var fa = DynamicBone.FreezeAxis.None;
             if (physbone.limitType == VRCPhysBoneBase.LimitType.Hinge)
             {
-                if (physbone.staticFreezeAxis == Vector3.right) fa = 1;
-                else if (physbone.staticFreezeAxis == Vector3.up) fa = 2;
-                else if (physbone.staticFreezeAxis == Vector3.forward) fa = 3;
+                if (physbone.staticFreezeAxis == Vector3.right) fa = DynamicBone.FreezeAxis.X;
+                else if (physbone.staticFreezeAxis == Vector3.up) fa = DynamicBone.FreezeAxis.Y;
+                else if (physbone.staticFreezeAxis == Vector3.forward) fa = DynamicBone.FreezeAxis.Z;
             }
-            DynBoneT.GetField("m_FreezeAxis").SetValue(newBone, fa);
+            newBone.m_FreezeAxis = fa;
 
             float f2 = Mathf.Max(1E-05f, AverageWorldBoneLength(physbone));
-            float f = -physbone.gravity * f2 / Mathf.Abs(physbone.gameObject.transform.lossyScale.x);
+            float f = -physbone.gravity * f2 / Mathf.Abs(physbone.transform.lossyScale.x);
             if (physbone.gravityFalloff == 1f)
             {
-                DynBoneT.GetField("m_Gravity").SetValue(newBone, new Vector3(0f, f, 0f));
+                newBone.m_Gravity = new Vector3(0f, f, 0f);
             }
             else if (physbone.gravityFalloff == 0f)
             {
-                DynBoneT.GetField("m_Force").SetValue(newBone, new Vector3(0f, f, 0f));
+                newBone.m_Force = new Vector3(0f, f, 0f);
             }
             else
             {
                 float f3 = Mathf.Round(100000000f * Mathf.Sin(2f * Mathf.PI * physbone.gravityFalloff)) / 100000000f;
                 float f4 = Mathf.Round(100000000f * Mathf.Cos(2f * Mathf.PI * physbone.gravityFalloff)) / 100000000f;
-                DynBoneT.GetField("m_Gravity").SetValue(newBone, new Vector3(0f, f*f3, 0f));
-                DynBoneT.GetField("m_Force").SetValue(newBone, new Vector3(0f, f*f4, 0f));
+                newBone.m_Gravity = new Vector3(0f, f * f3, 0f); newBone.m_Force = new Vector3(0f, f * f4, 0f);
             }
 
             float damping; AnimationCurve dampingDistrib;
@@ -163,8 +164,8 @@ namespace FACS01.Utilities
                     dampingDistrib.SmoothTangents(i, 0f);
                 }
             }
-            DynBoneT.GetField("m_Damping").SetValue(newBone, damping);
-            DynBoneT.GetField("m_DampingDistrib").SetValue(newBone, dampingDistrib);
+            newBone.m_Damping = damping;
+            newBone.m_DampingDistrib = dampingDistrib;
 
             float stiffness; AnimationCurve stiffnessDistrib;
             if (physbone.maxAngleXCurve == null || physbone.maxAngleXCurve.length == 0 || IsConstantCurve(physbone.maxAngleXCurve) == (true, 1))
@@ -189,12 +190,12 @@ namespace FACS01.Utilities
                     stiffnessDistrib.SmoothTangents(i, 0);
                 }
             }
-            DynBoneT.GetField("m_Stiffness").SetValue(newBone, stiffness);
-            DynBoneT.GetField("m_StiffnessDistrib").SetValue(newBone, stiffnessDistrib);
+            newBone.m_Stiffness = stiffness;
+            newBone.m_StiffnessDistrib = stiffnessDistrib;
 
             if (physbone.colliders != null && physbone.colliders.Count > 0)
             {
-                List<MonoBehaviour> cols = new List<MonoBehaviour>();
+                List<DynamicBoneColliderBase> cols = new List<DynamicBoneColliderBase>();
                 foreach (var col in physbone.colliders)
                 {
                     int ind = Array.IndexOf(pbcList, col);
@@ -203,7 +204,7 @@ namespace FACS01.Utilities
                         cols.Add(dbcList[ind]);
                     }
                 }
-                DynBoneT.GetField("m_Colliders").SetValue(newBone, cols);
+                newBone.m_Colliders = cols;
             }
         }
 
@@ -217,10 +218,7 @@ namespace FACS01.Utilities
                 kfs[i] = new Keyframe(num, num2);
             }
             AnimationCurve nac = new AnimationCurve(kfs);
-            for (int i = 0; i < nac.length; i++)
-            {
-                nac.SmoothTangents(i, 0f);
-            }
+            for (int i = 0; i < nac.length; i++) nac.SmoothTangents(i, 0f);
             return nac;
         }
 
@@ -246,28 +244,27 @@ namespace FACS01.Utilities
             return val;
         }
 
-        private void AddDBCol(List<MonoBehaviour> dbcList, VRCPhysBoneCollider col)
+        private void AddDBCol(List<DynamicBoneColliderBase> dbcList, VRCPhysBoneCollider col)
         {
             GameObject go = col.gameObject;
             var r = col.radius;
             var h = col.shapeType == VRCPhysBoneColliderBase.ShapeType.Capsule ? col.height : 0;
-            int bound = col.insideBounds ? 1 : 0;
-            Vector3 pos;
-            int dir = 1;
+            var bound = col.insideBounds ? DynamicBoneColliderBase.Bound.Inside : DynamicBoneColliderBase.Bound.Outside;
+            Vector3 pos; var dir = DynamicBoneColliderBase.Direction.Y;
             if (col.rotation == Quaternion.AngleAxis(-90f, Vector3.forward) ||
                 col.rotation == Quaternion.AngleAxis(90f, Vector3.forward))
             {
-                dir = 0; pos = col.position;
+                dir = DynamicBoneColliderBase.Direction.X; pos = col.position;
             }
             else if (col.rotation == Quaternion.identity ||
                 col.rotation == Quaternion.AngleAxis(180f, Vector3.forward))
             {
-                dir = 1; pos = col.position;
+                dir = DynamicBoneColliderBase.Direction.Y; pos = col.position;
             }
             else if (col.rotation == Quaternion.AngleAxis(90f, Vector3.right) ||
                 col.rotation == Quaternion.AngleAxis(-90f, Vector3.right))
             {
-                dir = 2; pos = col.position;
+                dir = DynamicBoneColliderBase.Direction.Z; pos = col.position;
             }
             else
             {
@@ -275,47 +272,46 @@ namespace FACS01.Utilities
                 pos = Quaternion.Inverse(col.rotation) * col.position;
             }
 
-            var newCol = (MonoBehaviour)go.AddComponent(DynBoneColliderT);
+            var newCol = go.AddComponent<DynamicBoneCollider>();
             newCol.enabled = col.enabled;
-            DynBoneColliderT.GetField("m_Center").SetValue(newCol, pos);
-            DynBoneColliderT.GetField("m_Direction").SetValue(newCol, dir);
-            DynBoneColliderT.GetField("m_Bound").SetValue(newCol, bound);
-            DynBoneColliderT.GetField("m_Radius").SetValue(newCol, r);
-            DynBoneColliderT.GetField("m_Height").SetValue(newCol, h);
+            newCol.m_Center = pos;
+            newCol.m_Direction = dir;
+            newCol.m_Bound = bound;
+            newCol.m_Radius = r;
+            newCol.m_Height = h;
             dbcList.Add(newCol);
         }
 
-        private void AddDBPlaneCol(List<MonoBehaviour> dbcList, VRCPhysBoneCollider col)
+        private void AddDBPlaneCol(List<DynamicBoneColliderBase> dbcList, VRCPhysBoneCollider col)
         {
             GameObject go = col.gameObject;
-            Vector3 pos = Vector3.zero;
-            int dir = 1; int bound = 0;
+            var dir = DynamicBoneColliderBase.Direction.Y; var bound = DynamicBoneColliderBase.Bound.Outside; Vector3 pos;
             if (col.rotation == Quaternion.AngleAxis(-90f, Vector3.forward))
             {
-                dir = 0; pos = col.position;
+                dir = DynamicBoneColliderBase.Direction.X; pos = col.position;
             }
             else if (col.rotation == Quaternion.AngleAxis(90f, Vector3.forward))
             {
-                dir = 0; pos = col.position;
-                bound = 1;
+                dir = DynamicBoneColliderBase.Direction.X; pos = col.position;
+                bound = DynamicBoneColliderBase.Bound.Inside;
             }
             else if (col.rotation == Quaternion.identity)
             {
-                dir = 1; pos = col.position;
+                dir = DynamicBoneColliderBase.Direction.Y; pos = col.position;
             }
             else if (col.rotation == Quaternion.AngleAxis(180f, Vector3.forward))
             {
-                dir = 1; pos = col.position;
-                bound = 1;
+                dir = DynamicBoneColliderBase.Direction.Y; pos = col.position;
+                bound = DynamicBoneColliderBase.Bound.Inside;
             }
             else if (col.rotation == Quaternion.AngleAxis(90f, Vector3.right))
             {
-                dir = 2; pos = col.position;
+                dir = DynamicBoneColliderBase.Direction.Z; pos = col.position;
             }
             else if (col.rotation == Quaternion.AngleAxis(-90f, Vector3.right))
             {
-                dir = 2; pos = col.position;
-                bound = 1;
+                dir = DynamicBoneColliderBase.Direction.Z; pos = col.position;
+                bound = DynamicBoneColliderBase.Bound.Inside;
             }
             else
             {
@@ -323,11 +319,11 @@ namespace FACS01.Utilities
                 pos = Quaternion.Inverse(col.rotation) * col.position;
             }
 
-            var newPlane = (MonoBehaviour)go.AddComponent(DynBonePlaneColliderT);
+            var newPlane = go.AddComponent<DynamicBonePlaneCollider>();
             newPlane.enabled = col.enabled;
-            DynBonePlaneColliderT.GetField("m_Center").SetValue(newPlane, pos);
-            DynBonePlaneColliderT.GetField("m_Direction").SetValue(newPlane, dir);
-            DynBonePlaneColliderT.GetField("m_Bound").SetValue(newPlane, bound);
+            newPlane.m_Center = pos;
+            newPlane.m_Direction = dir;
+            newPlane.m_Bound = bound;
             dbcList.Add(newPlane);
         }
 
@@ -338,14 +334,8 @@ namespace FACS01.Utilities
             newGO.transform.localPosition = position;
             newGO.transform.localScale = Vector3.one;
             newGO.transform.localRotation = rotation;
-            if (root.childCount == 0)
-            {
-                newGO.name = GOname;
-            }
-            else
-            {
-                newGO.name = GetUniqueName(newGO, GOname);
-            }
+            if (root.childCount == 0) newGO.name = GOname;
+            else newGO.name = GetUniqueName(newGO, GOname);
             return newGO;
         }
 
